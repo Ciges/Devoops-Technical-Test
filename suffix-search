@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+# Script that searches a directory tree for files that match one or more file basename specifications and which have a modification time within a given range (inclusive of start and end times). 
+#
+# The arguments are:
+# - A required path that specifies the root of the directory tree that is to be searched
+# - A required user-specified list of file base name specifications (pathnames without directories). The filenames must support ?, *, and [...] wildcards (glob patterns). At least one must be provided by the user
+# - A required date/time range in Unix time format (the number of seconds that have elapsed since the Unix epoch, 00:00:00 UTC on 1 January 1970).
+
+VERSION="1.0"
+
+# CONSTANTS
+readonly TEMP_STARDATEFILE="/tmp/suffix-search_startdate"
+readonly TEMP_ENDDATEFILE="/tmp/suffix-search_enddate"
+
+# FUNCTIONS
+
+# Show help instructions
+function help {
+    printf "%s\n"  "suffix-search v${VERSION} - Search or files by name and modification time"
+
+    printf "\nUse: suffix-search
+
+    -p | --path :  A required path that specifies the root of the directory tree that is to be searched
+
+    -f | --filename :  A required of file base name specifications (pathnames without directories). ?, *, and [...] wildcards are supported
+
+    -s | --startdate :  A required starting date/time in Unix time format (the number of seconds that have elapsed since the Unix epoch, 00:00:00 UTC on 1 January 1970)
+
+    -e | --enddate :  A required starting date/time in Unix time format (the number of seconds that have elapsed since the Unix epoch, 00:00:00 UTC on 1 January 1970)
+
+    -h | --help :  Shows this help :-)
+
+    Return code will be:
+      0 if files have been found
+      1 if no files have been found
+      2 if there has been an error
+
+
+Examples: 
+
+    Get Unix time for 01 January of 2020
+    
+    \$ date -d '01/01/2020 00:00' +%s
+    1577833200
+
+    Get Unix time for 15 Jully of 2020 at 12:00
+
+    \$ date -d '07/15/2020 12:00' +%s
+    1594807200
+
+    Get the images under /opt modified between the beginning of the year 2020 to 15 of Jully at 12:00
+
+    \$ suffix-search -p /opt -f *.png -s 1577833200 -e 1594807200
+
+"
+}
+
+# Shows a message in the error output and exits with return code 2
+function showerror {
+    printf "ERROR: %s\n\n" "Arguments required" 1>&2
+    help
+    exit 2
+}
+
+# CODE START
+
+# Argument parsing
+[[ $# -eq  0 ]] && showerror "Arguments required";
+
+
+options=$(getopt -o p:f:s:e:h:: --long path:,filenames:startdate:enddate:help:: -- "$@")
+eval set -- "$options"
+
+declare -a filenames
+help=0
+while true; do
+    case "$1" in
+        -p|--path)
+            path=$2; shift 2;
+            ;;
+        -f|--filename)
+            filenames+=( $2 ); shift 2;
+            ;;
+        -s|--startdate)
+            startdate=$2; shift 2;
+            ;;                
+        -e|--enddate)
+            enddate=$2; shift 2;
+            ;;
+        -h|--help)
+            help
+            exit 0
+            ;;
+        --)
+            shift; break;
+            ;;
+        *)
+            showerror "Incorrect arguments"
+            ;;
+    esac;
+done;
+
+if [[ -z "${path}" || -z "${filenames[@]}" || -z "${startdate}" || -z "${enddate}" ]]; then
+    showerror "Missing some arguments"
+fi;
+
+# Run the find command
+
+# We use --newer to look files in a date range, including signaled times
+((--startdate))
+((++enddate))
+touch -t $(date -d @${startdate} +%y%m%d%H%M.%S) ${TEMP_STARDATEFILE}
+if [[ $? -ne 0 ]]; then
+    printf "Error: Imposible to create temporary file ${TEMP_STARDATEFILE}"
+    exit 2
+fi;
+touch -t $(date -d @${enddate} +%y%m%d%H%M.%S) ${TEMP_ENDDATEFILE}
+if [[ $? -ne 0 ]]; then
+    printf "Error: Imposible to create temporary file ${TEMP_ENDDATEFILE}"
+    exit 2
+fi;
+
+for f in ${filenames[@]}; do
+    fnames="${fnames} -name $f"
+done;
+
+files_found="$(find ${path} ${fnames} -newer ${TEMP_STARDATEFILE} \! -newer ${TEMP_ENDDATEFILE} 2>/dev/null)"
+echo "${files_found}"|grep -v '^$'
+
+if [[ $(echo "${files_found}"|grep -v '^$'|wc -l) -gt 0 ]]; then
+    exit 0
+else
+    exit 1
+fi;
